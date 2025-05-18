@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>業務整形ツール</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+    h2, h3 {
+      margin-top: 20px;
+      color: #333;
+    }
+    .task-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    .task-row input {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .task-row input.task {
+      width: 250px;
+      background: #ffffe0;
+    }
+    .task-row input.time {
+      width: 100px;
+      background: #e0ffff;
+    }
+    .task-row input.percent {
+      width: 60px;
+      background: #ffe0ff;
+    }
+    .task-row button {
+      background: #ff6b6b;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 15px;
+      cursor: pointer;
+    }
+    .control-buttons {
+      margin: 15px 0;
+      display: flex;
+      gap: 10px;
+    }
+    .control-buttons button {
+      background: #4dabf7;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 20px;
+      cursor: pointer;
+    }
+    #output {
+      width: 100%;
+      height: 200px;
+      font-family: monospace;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f8f9fa;
+      white-space: pre;
+      margin-top: 10px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .copy-button {
+      margin-top: 10px;
+      background: #40c057;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 15px;
+      cursor: pointer;
+    }
+    #toggle-debug {
+      background: #868e96;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 12px;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>業務整形ツール（「：」「→」自動揃え）</h2>
+  <p>タスク、見込み時間、実績時間、進捗率を入力すると、きれいに整形されたテキストを生成します。</p>
+
+  <div id="task-container"></div>
+
+  <div class="control-buttons">
+    <button tabindex="0" onclick="addTaskRow()">タスク行を追加</button>
+    <button tabindex="0" onclick="formatTasks()">整形して出力</button>
+    <button tabindex="0" onclick="clearAll()">すべてクリア</button>
+  </div>
+
+  <h3>整形済みテキスト</h3>
+  <textarea id="output" readonly></textarea>
+  <div style="display: flex; gap: 10px; margin-top: 10px;">
+    <button class="copy-button" tabindex="0" onclick="copyToClipboard()">クリップボードにコピー</button>
+    <button id="toggle-debug" tabindex="0" onclick="toggleDebug()">デバッグ情報</button>
+  </div>
+
+  <div id="debug-container" style="display: none; margin-top: 20px;">
+    <h4>デバッグ情報</h4>
+    <pre id="debug-info" style="background: #f0f0f0; padding: 10px; border: 1px solid #ccc;"></pre>
+  </div>
+
+  <script>
+    function toggleDebug() {
+      const debugContainer = document.getElementById('debug-container');
+      debugContainer.style.display = debugContainer.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function getDisplayWidth(text) {
+      if (!text) return 0;
+      let width = 0;
+      for (let i = 0; i < text.length; i++) {
+        const c = text.charAt(i);
+        width += (c.match(/[\u3000-\u9fff\uff00-\uffef]/)) ? 2 : 1;
+      }
+      return width;
+    }
+
+    function padWithSpaces(text, targetWidth) {
+      if (!text) return ' '.repeat(targetWidth);
+      const currentWidth = getDisplayWidth(text);
+      let padding = '';
+      let remainingWidth = targetWidth - currentWidth;
+      while (remainingWidth >= 2) {
+        padding += '　';
+        remainingWidth -= 2;
+      }
+      if (remainingWidth === 1) padding += ' ';
+      return text + padding;
+    }
+
+    function visualizeWidth(text) {
+      let result = '';
+      for (let i = 0; i < text.length; i++) {
+        const c = text.charAt(i);
+        result += c.match(/[\u3000-\u9fff\uff00-\uffef]/) ? 'WW' : 'H';
+      }
+      return result;
+    }
+
+    function addTaskRow() {
+      const container = document.getElementById("task-container");
+      const div = document.createElement("div");
+      div.className = "task-row";
+      div.innerHTML = `
+        <input class="task" placeholder="タスク名" />
+        <input class="time" placeholder="見込み時間" />
+        <input class="time" placeholder="実績時間" />
+        <input class="percent" placeholder="進捗%" />
+        <button tabindex="0" onclick="this.parentNode.remove()">削除</button>
+      `;
+      container.appendChild(div);
+
+      const inputs = div.querySelectorAll("input");
+      inputs.forEach((input, i) => {
+        input.addEventListener("keydown", (e) => {
+          const row = input.parentElement;
+          const allRows = Array.from(document.querySelectorAll(".task-row"));
+          const rowIndex = allRows.indexOf(row);
+          const nextRow = allRows[rowIndex + 1];
+          const prevRow = allRows[rowIndex - 1];
+
+          if (e.key === "ArrowRight") {
+            if (i < inputs.length - 1) {
+              inputs[i + 1].focus();
+            } else {
+              // 行の最後の入力欄から削除ボタンへの移動
+              const deleteButton = row.querySelector("button");
+              if (deleteButton) deleteButton.focus();
+            }
+            e.preventDefault();
+          } else if (e.key === "ArrowLeft") {
+            if (i > 0) {
+              inputs[i - 1].focus();
+            }
+            e.preventDefault();
+          } else if (e.key === "ArrowDown") {
+            if (nextRow) {
+              nextRow.querySelectorAll("input")[i].focus();
+            } else {
+              // 最後の行の入力欄からコントロールボタンへの移動
+              const controlButtons = document.querySelectorAll('.control-buttons button');
+              if (controlButtons.length > 0) {
+                // 入力欄の位置に応じてどのボタンにフォーカスするかを決定
+                const buttonIndex = Math.min(Math.floor(i * controlButtons.length / inputs.length), controlButtons.length - 1);
+                controlButtons[buttonIndex].focus();
+              }
+            }
+            e.preventDefault();
+          } else if (e.key === "ArrowUp") {
+            if (prevRow) {
+              prevRow.querySelectorAll("input")[i].focus();
+            }
+            e.preventDefault();
+          }
+        });
+      });
+      
+      // 削除ボタンのナビゲーションを設定
+      const deleteButton = div.querySelector("button");
+      setupButtonNavigation(deleteButton);
+      
+      // 新しい行が追加されたらナビゲーション順序を更新
+      updateNavigationOrder();
+    }
+
+    function clearAll() {
+      document.getElementById("task-container").innerHTML = "";
+      document.getElementById("output").value = "";
+      addTaskRow();
+    }
+
+    function formatTasks() {
+      const rows = document.querySelectorAll(".task-row");
+      const tasks = Array.from(rows).map(row => {
+        const inputs = row.querySelectorAll("input");
+        return {
+          task: inputs[0].value.trim() || "",
+          planned: inputs[1].value.trim() || "",
+          actual: inputs[2].value.trim() || "",
+          rate: inputs[3].value.trim() || ""
+        };
+      }).filter(t => t.task || t.planned || t.actual || t.rate);
+
+      if (tasks.length === 0) {
+        document.getElementById("output").value = "タスクが入力されていません";
+        return;
+      }
+
+      const debugInfo = [];
+      debugInfo.push("--- タスク幅の分析 ---");
+      tasks.forEach((t, i) => {
+        const width = getDisplayWidth(t.task);
+        const visual = visualizeWidth(t.task);
+        debugInfo.push(`${i+1}: [${t.task}] 幅=${width}, 文字数=${t.task.length}, 表現=${visual}`);
+      });
+
+      const maxTaskWidth = Math.max(...tasks.map(t => getDisplayWidth(t.task))) + 2;
+      const maxPlannedWidth = Math.max(...tasks.map(t => getDisplayWidth(t.planned))) + 2;
+
+      debugInfo.push(`\n最大タスク幅: ${maxTaskWidth}`);
+      debugInfo.push(`最大見込み時間幅: ${maxPlannedWidth}`);
+
+      const result = tasks.map((t, index) => {
+        const taskPadded = padWithSpaces(t.task, maxTaskWidth);
+        const plannedPadded = padWithSpaces(t.planned, maxPlannedWidth);
+        const actual = t.actual;
+        const rate = t.rate ? `（${t.rate}%）` : "";
+        const line = `・${taskPadded}： ${plannedPadded}→ ${actual} ${rate}`;
+
+        debugInfo.push(`\n--- 行 ${index+1} パディング結果 ---`);
+        debugInfo.push(`元のタスク: [${t.task}] 幅=${getDisplayWidth(t.task)}`);
+        debugInfo.push(`パディング後: [${taskPadded}] 幅=${getDisplayWidth(taskPadded)}`);
+        debugInfo.push(`目標幅: ${maxTaskWidth}`);
+
+        return line.trimEnd();
+      }).join("\n");
+
+      document.getElementById("output").value = result;
+      document.getElementById("debug-info").textContent = debugInfo.join("\n");
+    }
+
+    function copyToClipboard() {
+      const output = document.getElementById("output");
+      output.select();
+      document.execCommand("copy");
+      const copyBtn = document.querySelector(".copy-button");
+      const originalText = copyBtn.textContent;
+      copyBtn.textContent = "コピーしました！";
+      setTimeout(() => {
+        copyBtn.textContent = originalText;
+      }, 2000);
+    }
+
+    // ボタンナビゲーション関連の新しい関数
+    function setupButtonNavigation(button) {
+      button.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || 
+            e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault(); // デフォルトの動作を防止
+          navigateButtons(button, e.key);
+        }
+      });
+    }
+
+    function getAllInteractiveElements() {
+      // タブ順序でナビゲート可能なすべての要素を取得
+      const allElements = [];
+      
+      // タスク行の入力欄と削除ボタン
+      document.querySelectorAll('.task-row').forEach(row => {
+        const rowElements = Array.from(row.querySelectorAll('input, button'));
+        allElements.push(...rowElements);
+      });
+      
+      // コントロールボタン
+      const controlButtons = Array.from(document.querySelectorAll('.control-buttons button'));
+      allElements.push(...controlButtons);
+      
+      // コピーボタンとデバッグボタン
+      const copyAndDebugButtons = Array.from(document.querySelectorAll('.copy-button, #toggle-debug'));
+      allElements.push(...copyAndDebugButtons);
+      
+      return allElements;
+    }
+
+    function updateNavigationOrder() {
+      const allElements = getAllInteractiveElements();
+      
+      // すべてのボタンにナビゲーション設定を追加
+      allElements.filter(el => el.tagName === 'BUTTON').forEach(setupButtonNavigation);
+    }
+
+    function navigateButtons(currentButton, direction) {
+      const allElements = getAllInteractiveElements();
+      const currentIndex = allElements.indexOf(currentButton);
+      
+      if (currentIndex === -1) return;
+      
+      // 現在の要素の位置情報
+      const currentRect = currentButton.getBoundingClientRect();
+      const currentRow = Math.floor(currentRect.top / 50); // おおよその行位置
+      const currentCol = Math.floor(currentRect.left / 50); // おおよその列位置
+      
+      let nextElement;
+      
+      switch (direction) {
+        case 'ArrowDown':
+          // 下の行で最も近い位置の要素を探す
+          nextElement = allElements.find(el => {
+            const rect = el.getBoundingClientRect();
+            const row = Math.floor(rect.top / 50);
+            return row > currentRow && Math.abs(rect.left - currentRect.left) < 100;
+          });
+          
+          // 見つからなければ次の要素
+          if (!nextElement && currentIndex < allElements.length - 1) {
+            nextElement = allElements[currentIndex + 1];
+          }
+          break;
+          
+        case 'ArrowUp':
+          // 上の行で最も近い位置の要素を探す
+          nextElement = [...allElements].reverse().find(el => {
+            const rect = el.getBoundingClientRect();
+            const row = Math.floor(rect.top / 50);
+            return row < currentRow && Math.abs(rect.left - currentRect.left) < 100;
+          });
+          
+          // 見つからなければ前の要素
+          if (!nextElement && currentIndex > 0) {
+            nextElement = allElements[currentIndex - 1];
+          }
+          break;
+          
+        case 'ArrowRight':
+          // 同じ行で右側の最も近い要素
+          nextElement = allElements.find(el => {
+            const rect = el.getBoundingClientRect();
+            const row = Math.floor(rect.top / 50);
+            return row === currentRow && rect.left > currentRect.left;
+          });
+          
+          // 見つからなければ次の行の最初
+          if (!nextElement) {
+            nextElement = allElements.find(el => {
+              const rect = el.getBoundingClientRect();
+              const row = Math.floor(rect.top / 50);
+              return row > currentRow;
+            });
+          }
+          break;
+          
+        case 'ArrowLeft':
+          // 同じ行で左側の最も近い要素
+          nextElement = [...allElements].reverse().find(el => {
+            const rect = el.getBoundingClientRect();
+            const row = Math.floor(rect.top / 50);
+            return row === currentRow && rect.left < currentRect.left;
+          });
+          
+          // 見つからなければ前の行の最後
+          if (!nextElement) {
+            const prevRowElements = allElements.filter(el => {
+              const rect = el.getBoundingClientRect();
+              const row = Math.floor(rect.top / 50);
+              return row < currentRow;
+            });
+            if (prevRowElements.length > 0) {
+              nextElement = prevRowElements[prevRowElements.length - 1];
+            }
+          }
+          break;
+      }
+      
+      if (nextElement) {
+        nextElement.focus();
+      }
+    }
+
+    window.onload = function() {
+      addTaskRow();
+      
+      // コントロールボタンとその他のボタンにナビゲーション機能を設定
+      document.querySelectorAll('button').forEach(setupButtonNavigation);
+      
+      // 初期状態でのナビゲーション順序を設定
+      updateNavigationOrder();
+      
+      // 制御キーの特別な処理
+      document.addEventListener('keydown', (e) => {
+        // ESCキーでフォーカスをクリアする
+        if (e.key === 'Escape') {
+          document.activeElement.blur();
+        }
+      });
+    }
+  </script>
+</body>
+</html>
